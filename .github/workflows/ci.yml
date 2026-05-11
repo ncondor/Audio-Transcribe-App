@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend:
+    name: Frontend (tsc + vite)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+
+  rust:
+    name: Rust (cargo check, Windows, CPU-only)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - name: Stub sidecar + resources
+        # Tauri's build script asserts these paths exist; the real artifacts
+        # are downloaded by scripts/download-ffmpeg.ps1 and the model script
+        # on dev/build machines. CI only type-checks Rust, so stubs suffice.
+        shell: bash
+        run: |
+          mkdir -p src-tauri/binaries src-tauri/resources
+          touch src-tauri/binaries/ffmpeg-x86_64-pc-windows-msvc.exe
+          touch src-tauri/resources/.gitkeep
+      - name: cargo check
+        working-directory: src-tauri
+        run: cargo check --no-default-features --features cpu
