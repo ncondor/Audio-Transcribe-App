@@ -1,7 +1,6 @@
 use crate::error::{AppError, AppResult};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
 use tauri::AppHandle;
 use tauri_plugin_shell::ShellExt;
 
@@ -41,7 +40,7 @@ pub async fn extract_audio(
     src: &Path,
     dest: &Path,
 ) -> AppResult<()> {
-    let status = app
+    let output = app
         .shell()
         .sidecar("ffmpeg")
         .map_err(|_| AppError::FfmpegMissing)?
@@ -58,16 +57,14 @@ pub async fn extract_audio(
             "pcm_s16le",
             dest.to_string_lossy().as_ref(),
         ])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
+        .output()
         .await
         .map_err(|e| AppError::Media(e.to_string()))?;
 
-    if !status.success() {
+    if !output.status.success() {
         return Err(AppError::Media(format!(
             "ffmpeg exited with status {}",
-            status.code().unwrap_or(-1)
+            output.status.code().unwrap_or(-1)
         )));
     }
     Ok(())

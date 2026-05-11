@@ -103,95 +103,100 @@ async fn run(
             opts.model.label()
         )));
     }
+    let model_path_str = model_path
+        .to_str()
+        .ok_or_else(|| AppError::Model("invalid model path".into()))?
+        .to_string();
 
     let samples = read_wav(&wav_path)?;
     let total_ms = (samples.len() as u64 * 1000) / 16_000;
 
-    let mut ctx_params = WhisperContextParameters::default();
-    ctx_params.use_gpu(opts.use_gpu);
-    let ctx = WhisperContext::new_with_params(
-        model_path
-            .to_str()
-            .ok_or_else(|| AppError::Model("invalid model path".into()))?,
-        ctx_params,
-    )
-    .map_err(|e| AppError::Model(e.to_string()))?;
+    // whisper.cpp's `full()` is synchronous and runs for the entire duration of the
+    // transcription. Running it directly inside this async fn would pin a tokio worker
+    // thread for minutes, blocking event emission and other commands. Move it onto a
+    // dedicated blocking thread so the runtime stays responsive.
+    let app_blk = app.clone();
+    let job_blk = job_id.to_string();
+    let work = tokio::task::spawn_blocking(move || -> AppResult<()> {
+        let mut ctx_params = WhisperContextParameters::default();
+        ctx_params.use_gpu(opts.use_gpu);
+        let ctx = WhisperContext::new_with_params(&model_path_str, ctx_params)
+            .map_err(|e| AppError::Model(e.to_string()))?;
 
-    let mut state = ctx
-        .create_state()
-        .map_err(|e| AppError::Transcription(e.to_string()))?;
-
-    let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
-    params.set_translate(opts.translate);
-    params.set_print_special(false);
-    params.set_print_progress(false);
-    params.set_print_realtime(false);
-    params.set_print_timestamps(false);
-    if opts.language != "auto" {
-        params.set_language(Some(&opts.language));
-    }
-    let threads = std::thread::available_parallelism()
-        .map(|n| n.get() as i32)
-        .unwrap_or(4);
-    params.set_n_threads(threads);
-
-    emit_status(
-        &app,
-        job_id,
-        Status::Transcribing {
-            progress: 0.0,
-            current_ms: 0,
-        },
-    );
-
-    // Run synchronously — whisper.cpp does its own threading.
-    state
-        .full(params, &samples)
-        .map_err(|e| AppError::Transcription(e.to_string()))?;
-
-    let num = state
-        .full_n_segments()
-        .map_err(|e| AppError::Transcription(e.to_string()))?;
-
-    for i in 0..num {
-        if *cancel_rx.borrow() {
-            break;
-        }
-        let text = state
-            .full_get_segment_text(i)
+        let mut state = ctx
+            .create_state()
             .map_err(|e| AppError::Transcription(e.to_string()))?;
-        let start = state
-            .full_get_segment_t0(i)
-            .map_err(|e| AppError::Transcription(e.to_string()))? as u64
-            * 10;
-        let end = state
-            .full_get_segment_t1(i)
-            .map_err(|e| AppError::Transcription(e.to_string()))? as u64
-            * 10;
 
-        let seg = Segment {
-            id: i,
-            start_ms: start,
-            end_ms: end,
-            text: text.trim().to_string(),
-        };
-        let _ = app.emit(&format!("transcription:{job_id}:segment"), &seg);
-        let progress = if total_ms > 0 {
-            (end as f32 / total_ms as f32).clamp(0.0, 1.0)
-        } else {
-            0.0
-        };
-        emit_status(
-            &app,
-            job_id,
-            Status::Transcribing {
-                progress,
-                current_ms: end,
-            },
+        let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
+        params.set_translate(opts.translate);
+        params.set_print_special(false);
+        params.set_print_progress(false);
+        params.set_print_realtime(false);
+        params.set_print_timestamps(false);
+        if opts.language != "auto" {
+            params.set_language(Some(&opts.language));
+        }
+        let threads = std::thread::available_parallelism()
+            .map(|n| n.get() as i32)
+            .unwrap_or(4);
+        params.set_n_threads(threads);
+
+        let _ = app_blk.emit(
+            &format!("transcription:{job_blk}:status"),
+            Status::Transcribing { progress: 0.0, current_ms: 0 },
         );
-    }
+
+        state
+            .full(params, &samples)
+            .map_err(|e| AppError::Transcription(e.to_string()))?;
+
+        let num = state
+            .full_n_segments()
+            .map_err(|e| AppError::Transcription(e.to_string()))?;
+
+        for i in 0..num {
+            if *cancel_rx.borrow() {
+                break;
+            }
+            let text = state
+                .full_get_segment_text(i)
+                .map_err(|e| AppError::Transcription(e.to_string()))?;
+            let start = state
+                .full_get_segment_t0(i)
+                .map_err(|e| AppError::Transcription(e.to_string()))? as u64
+                * 10;
+            let end = state
+                .full_get_segment_t1(i)
+                .map_err(|e| AppError::Transcription(e.to_string()))? as u64
+                * 10;
+
+            let seg = Segment {
+                id: i,
+                start_ms: start,
+                end_ms: end,
+                text: text.trim().to_string(),
+            };
+            let _ = app_blk.emit(&format!("transcription:{job_blk}:segment"), &seg);
+            let progress = if total_ms > 0 {
+                (end as f32 / total_ms as f32).clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
+            let _ = app_blk.emit(
+                &format!("transcription:{job_blk}:status"),
+                Status::Transcribing { progress, current_ms: end },
+            );
+        }
+        Ok(())
+    });
+
+    let result = work
+        .await
+        .map_err(|e| AppError::Other(format!("transcription task panicked: {e}")))?;
 
     let _ = std::fs::remove_file(&wav_path);
+    result?;
+
     emit_status(&app, job_id, Status::Done);
 
     let state_ref: tauri::State<'_, AppState> = app.state();

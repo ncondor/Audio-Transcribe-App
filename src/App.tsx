@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { UnlistenFn } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Cpu, Loader2, Sparkles, X } from "lucide-react";
 import { FileDropZone } from "./components/FileDropZone";
 import { ModelSelector } from "./components/ModelSelector";
@@ -35,7 +36,9 @@ export default function App() {
     name: null,
   });
   const [jobId, setJobId] = useState<string | null>(null);
+  const [dragActive, setDragActive] = useState(false);
   const previewRef = useRef<VideoPreviewHandle | null>(null);
+  const transcribingRef = useRef(false);
 
   useEffect(() => {
     detectGpu().then(setGpu);
@@ -65,6 +68,33 @@ export default function App() {
       setStatus({ kind: "error", message: String(err) });
     }
   }, []);
+
+  useEffect(() => {
+    let unlisten: UnlistenFn | undefined;
+    let cancelled = false;
+    getCurrentWindow()
+      .onDragDropEvent((event) => {
+        const t = event.payload.type;
+        if (t === "drop") {
+          setDragActive(false);
+          if (transcribingRef.current) return;
+          const paths = event.payload.paths ?? [];
+          if (paths.length > 0) handleFile(paths[0]);
+        } else if (t === "leave") {
+          setDragActive(false);
+        } else {
+          setDragActive(true);
+        }
+      })
+      .then((fn) => {
+        if (cancelled) fn();
+        else unlisten = fn;
+      });
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, [handleFile]);
 
   const handleStart = async () => {
     if (!media) return;
@@ -111,6 +141,7 @@ export default function App() {
     status.kind === "extracting" ||
     status.kind === "loading-model" ||
     status.kind === "transcribing";
+  transcribingRef.current = transcribing;
 
   return (
     <div className="h-screen flex">
@@ -126,7 +157,11 @@ export default function App() {
         </header>
 
         <div className="flex-1 overflow-y-auto p-4 space-y-5">
-          <FileDropZone onFile={handleFile} disabled={transcribing} />
+          <FileDropZone
+            onFile={handleFile}
+            disabled={transcribing}
+            dragActive={dragActive}
+          />
 
           {gpu.available && (
             <label className="flex items-center gap-2 text-[12px] text-[var(--muted)]">

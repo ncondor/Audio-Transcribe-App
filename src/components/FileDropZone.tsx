@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { FileVideo, Upload } from "lucide-react";
 import clsx from "clsx";
@@ -6,11 +6,10 @@ import clsx from "clsx";
 interface Props {
   onFile: (path: string) => void;
   disabled?: boolean;
+  dragActive?: boolean;
 }
 
-export function FileDropZone({ onFile, disabled }: Props) {
-  const [hovering, setHovering] = useState(false);
-
+export function FileDropZone({ onFile, disabled, dragActive }: Props) {
   const pick = useCallback(async () => {
     if (disabled) return;
     const selected = await open({
@@ -32,20 +31,15 @@ export function FileDropZone({ onFile, disabled }: Props) {
     <button
       type="button"
       onClick={pick}
-      onDragOver={(e) => {
-        e.preventDefault();
-        setHovering(true);
-      }}
-      onDragLeave={() => setHovering(false)}
       disabled={disabled}
       className={clsx(
         "w-full flex flex-col items-center justify-center gap-3 py-16 px-6 rounded-xl border-2 border-dashed transition-colors",
-        hovering ? "border-[var(--accent)] bg-[var(--surface)]" : "border-[var(--border-mid)]",
+        dragActive ? "border-[var(--accent)] bg-[var(--surface)]" : "border-[var(--border-mid)]",
         disabled ? "opacity-40 cursor-not-allowed" : "cursor-pointer hover:bg-[var(--surface)]"
       )}
     >
       <div className="w-12 h-12 rounded-full bg-[var(--surface)] flex items-center justify-center">
-        {hovering ? (
+        {dragActive ? (
           <Upload className="w-5 h-5 text-[var(--accent)]" />
         ) : (
           <FileVideo className="w-5 h-5 text-[var(--muted)]" />
