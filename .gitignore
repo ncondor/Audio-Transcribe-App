@@ -1,0 +1,41 @@
+# dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# build outputs
+dist/
+dist-ssr/
+build/
+src-tauri/target/
+src-tauri/gen/
+
+# bundled binaries & models (downloaded by scripts)
+src-tauri/binaries/*.exe
+src-tauri/binaries/*.dll
+src-tauri/resources/*.bin
+src-tauri/resources/*.gguf
+
+# editor
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# env & local config
+.env
+.env.local
+.env.*.local
+
+# logs
+*.log
+npm-debug.log*
+
+# rust
+**/*.rs.bk
+Cargo.lock.bak
