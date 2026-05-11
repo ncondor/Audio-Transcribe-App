@@ -40,8 +40,18 @@ Set the following env vars (PowerShell, permanent):
 
 ## First-time setup
 
+Once the prerequisites above are installed, run the bundled setup script — it
+installs npm deps, downloads the FFmpeg sidecar and the default Whisper model,
+then launches the dev server:
+
 ```powershell
-# clone, then
+cd Audio-Transcribe-App
+.\scripts\setup.ps1
+```
+
+If you'd rather do it by hand:
+
+```powershell
 cd Audio-Transcribe-App
 npm install
 .\scripts\download-ffmpeg.ps1     # downloads ffmpeg.exe into src-tauri\binaries
